@@ -170,10 +170,7 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         "import manim",
         code, "import manimlib → import manim"
     )
-
-    # =========================================================================
-    # 2. BALANCED-PAREN CALL REWRITES (Handles arbitrary nested parens & kwargs)
-    # =========================================================================
+    
 
     # FadeInFromDown(mob, **kwargs) → FadeIn(mob, shift=DOWN, **kwargs)
     code = _rewrite_call(
@@ -203,7 +200,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         log, "FadeInFrom(mob, dir) → FadeIn(mob, shift=dir)", verbose
     )
 
-    # FadeInFromLarge(mob, scale_factor=2, **kwargs) → FadeIn(mob, scale=..., **kwargs)
     def _fix_fade_in_large(args: List[str]) -> Optional[str]:
         if not args:
             return None
@@ -219,7 +215,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         log, "FadeInFromLarge → FadeIn(..., scale=...)", verbose
     )
 
-    # FadeInFromPoint(mob, point, **kwargs) → FadeIn(mob, target_position=point, **kwargs)
     def _fix_fade_in_point(args: List[str]) -> Optional[str]:
         if len(args) < 2:
             return f"FadeIn({', '.join(args)})"
@@ -231,7 +226,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         log, "FadeInFromPoint → FadeIn(..., target_position=...)", verbose
     )
 
-    # FadeOutAndShift(mob, dir, **kwargs) → FadeOut(mob, shift=dir, **kwargs)
     def _fix_fade_out_shift(args: List[str]) -> Optional[str]:
         if len(args) < 2:
             return f"FadeOut({', '.join(args)})"
@@ -244,7 +238,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         log, "FadeOutAndShift → FadeOut(..., shift=...)", verbose
     )
 
-    # FadeOutAndShiftDown(mob, **kwargs) → FadeOut(mob, shift=DOWN, **kwargs)
     code = _rewrite_call(
         code, "FadeOutAndShiftDown",
         lambda args: f"FadeOut({args[0]}, shift=DOWN" + (f", {', '.join(args[1:])})" if len(args) > 1 else ")") if args else None,
@@ -264,7 +257,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         log, "ChangingDecimal → UpdateFromAlphaFunc", verbose
     )
 
-    # always_shift(mob, direction, rate) → mob.add_updater(...)
     def _fix_always_shift(args: List[str]) -> Optional[str]:
         if len(args) < 2:
             return None
@@ -278,12 +270,10 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         log, "always_shift → .add_updater", verbose
     )
 
-    # ApplyMethod(mob.method, *args) → mob.animate.method(*args) (when no extra anim kwargs)
     def _fix_apply_method(args: List[str]) -> Optional[str]:
         if not args or "." not in args[0]:
             return None
-        # If animation kwargs like run_time= or rate_func= are passed inside ApplyMethod,
-        # keep ApplyMethod as-is (ApplyMethod still exists in Manim CE!)
+
         for a in args[1:]:
             if re.match(r"^(run_time|rate_func|lag_ratio)\s*=", a):
                 return None
@@ -299,10 +289,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         log, "ApplyMethod → .animate", verbose
     )
 
-    # =========================================================================
-    # 3. CLASS / MOBJECT RENAMES
-    #    (Note: AddTextLetterByLetter removed since it exists natively in CE)
-    # =========================================================================
     class_renames = {
         "TextMobject": "Tex",
         "TexMobject": "MathTex",
@@ -341,9 +327,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
             code, f"class: {old_name} → {new_name}"
         )
 
-    # =========================================================================
-    # 4. METHOD CALLS WITH CHANGED SIGNATURES (Supports multi-arg & nested parens)
-    # =========================================================================
     code = _replace(
         r"\.set_fill_opacity\s*\(\s*(?!opacity\s*=)",
         ".set_fill(opacity=",
@@ -373,9 +356,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         code, ".scale_about_point(f, pt) → .scale(f, about_point=pt)"
     )
 
-    # =========================================================================
-    # 5. SIMPLE METHOD / PROPERTY RENAMES
-    # =========================================================================
     method_renames = {
         ".get_center_of_mass": ".get_center",
         ".set_submobject_colors_by_gradient": ".set_color_by_gradient",
@@ -401,9 +381,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
             code, f"method: {old_method} → {new_method}"
         )
 
-    # =========================================================================
-    # 6. PARAMETER / KEYWORD ARGUMENT & FRAME CONSTANT RENAMES
-    # =========================================================================
     code = _replace(
         r"submobject_mode\s*=\s*__MANIM_STR_\d+__",
         "lag_ratio=0.5",
@@ -440,9 +417,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         code, "rate_function= → rate_func="
     )
 
-    # =========================================================================
-    # 7. COLOR & RATE FUNCTION RENAMES
-    # =========================================================================
     color_renames = {
         "DARK_GREY": "DARK_GRAY",
         "LIGHT_GREY": "LIGHT_GRAY",
@@ -473,9 +447,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
             code, f"rate_func: {old_rf} → {new_rf}"
         )
 
-    # =========================================================================
-    # 8. INDENT-SAFE GRAPHSCENE → AXES MIGRATION (With fallback initialization)
-    # =========================================================================
     code = _replace(
         r"^([ \t]*)self\.setup_axes\s*\(\s*animate\s*=\s*True\s*\)",
         r"\1self.axes = Axes()\n\1self.play(Create(self.axes))",
@@ -499,19 +470,12 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
             f"self.axes.{graph_method}(",
             code, f"self.{graph_method} → self.axes.{graph_method}"
         )
-
-    # If self.axes is used (e.g. from self.plot) without setup_axes ever being called,
-    # initialize self.axes = Axes() at the top of construct(self):
     if "self.axes." in code and "self.axes =" not in code and "self.axes=" not in code:
         code = _replace(
             r"(def\s+construct\s*\(\s*self\s*\)\s*:\s*\n)([ \t]+)",
             r"\1\2self.axes = Axes()\n\2",
             code, "Inject fallback self.axes = Axes() in construct()"
         )
-
-    # =========================================================================
-    # 9. CAMERA & PLAY KWARG FIXES
-    # =========================================================================
     code = _replace(
         r"self\.camera_frame\b",
         "self.camera.frame",
@@ -522,10 +486,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         r", \1",
         code, "added_anims=[...] → inline anims"
     )
-
-    # =========================================================================
-    # 10. AXES / NUMBERLINE / SURFACE RANGE FIXES
-    # =========================================================================
     code = _replace(
         r"NumberLine\s*\(\s*x_min\s*=\s*(-?[\d.]+)\s*,\s*x_max\s*=\s*(-?[\d.]+)",
         r"NumberLine(x_range=[\1, \2, 1]",
@@ -542,9 +502,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         code, "Surface u_min/v_min → u_range/v_range"
     )
 
-    # =========================================================================
-    # 11. CORNER / EDGE CONSTANTS (Allows `== TOP`, blocks `TOP = ...`)
-    # =========================================================================
     code = _replace(
         r"\bTOP\b(?!\s*=[^=])",
         "(UP * config.frame_height / 2)",
@@ -566,9 +523,6 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         code, "RIGHT_SIDE → (RIGHT * config.frame_width / 2)"
     )
 
-    # =========================================================================
-    # 12. DIGEST_CONFIG CLEANUP
-    # =========================================================================
     code = _replace(
         r"digest_config\s*\(\s*self\s*,?\s*\w*\s*\)",
         "pass  # digest_config removed in CE",
@@ -579,19 +533,11 @@ def fix_manim_code(code: str, verbose: bool = False) -> str:
         "pass  # digest_locals removed in CE",
         code, "digest_locals → pass"
     )
-
-    # =========================================================================
-    # 13. RESTORE PROTECTED STRING LITERALS
-    # =========================================================================
     def _unmask_strings(match):
         idx = int(match.group(1))
         return protected_strings[idx]
 
     code = re.sub(r"__MANIM_STR_(\d+)__", _unmask_strings, code)
-
-    # =========================================================================
-    # 14. FINAL IMPORT CLEANUP (Always ensure `from manim import *` is present)
-    # =========================================================================
     if not re.search(r"^\s*from\s+manim\s+import\s+\*", code, flags=re.MULTILINE):
         code = "from manim import *\n\n" + code
 
