@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LearnAnything Video Generator</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!--
+  <div class="top-nav">
+    <a href="/">Home</a>
+    <a href="/archive">Archive</a>
+  </div>
+  -->
+
+  <h2>LearnAnything Video Generator</h2>
+
+  <div class="box">
+    <label for="in_prompt">Prompt / Educational Topic:</label>
+    <textarea id="in_prompt" placeholder="e.g. How Backpropagation Works in Neural Networks"></textarea>
+    <div class="row">
+      <label>
+        <input type="checkbox" id="chk_inc">
+        Include generated Manim code in output
+      </label>
+      <button id="btn_submit" onclick="runGen()">Generate Video</button>
+    </div>
+  </div>
+
+  <div class="box">
+    <h3>Pipeline Status</h3>
+
+    <div id="card_s1">
+      <b>Stage 1: Script Generation</b> &mdash; <span class="bdg idle" id="b1">idle</span>
+      <div id="s1_body" style="display: none">
+        <div id="s1_msg" style="color: #888; font-size: 13px; margin-top: 4px;"></div>
+        <pre id="p_script" style="display: none"></pre>
+      </div>
+    </div>
+
+    <div id="card_s2">
+      <b>Stage 2: Voiceover Audio</b> &mdash; <span class="bdg idle" id="b2">idle</span>
+      <div id="s2_body" style="display: none">
+        <div id="s2_msg" style="color: #888; font-size: 13px; margin-top: 4px;"></div>
+        <div class="sec_list" id="v_secs"></div>
+      </div>
+    </div>
+
+    <div id="card_s3">
+      <b>Stage 3: Manim Animations</b> &mdash; <span class="bdg idle" id="b3">idle</span>
+      <div id="s3_body" style="display: none">
+        <div id="s3_msg" style="color: #888; font-size: 13px; margin-top: 4px;"></div>
+        <div class="sec_list" id="a_secs"></div>
+      </div>
+    </div>
+
+    <div id="err_bx" style="display: none"></div>
+
+    <div id="vid_wrap" style="display: none; margin-top: 15px;">
+      <h3>Generated Video</h3>
+      <video id="out_player" controls></video>
+      <div id="v_info"></div>
+    </div>
+
+    <div id="cd_wrap" style="display: none; margin-top: 15px;">
+      <h3>Generated Manim Code</h3>
+      <pre><code id="raw_code"></code></pre>
+    </div>
+
+    <div id="rt_wrap" style="display: none; margin-top: 15px;">
+      <h3>Rate this video (1 to 10):</h3>
+      <div id="rate_btns"></div>
+      <button id="sub_rate" onclick="sendRating()" disabled>Submit Rating</button>
+      <span id="rt_stat"></span>
+    </div>
+  </div>
+
+  <!--
+  <div id="footer-debug" style="display: none;">
+    <p>Build 0.1.2 - Local Worker</p>
+  </div>
+  -->
+
+  <script src="/app.js"></script>
+</body>
+</html>

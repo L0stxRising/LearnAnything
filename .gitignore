@@ -1,2 +1,7 @@
 .venv
 media
+__pycache__/
+*.pyc
+output/
+temp/
+.vercel/
