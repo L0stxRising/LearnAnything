@@ -1,162 +1,126 @@
-import asyncio
-import json
-import os
-import sys
+import asyncio,json,os,sys,time
 from pathlib import Path
-from typing import AsyncGenerator
-
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI,HTTPException,Query,Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse,StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
-app = FastAPI(title="LearnAnything Minimal Web Runner")
+# import threading
+# from flask import Flask, request, jsonify
+# flask_app = Flask(__name__)
 
+app=FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*"]
 )
 
-BASE_DIR = Path(__file__).resolve().parent
-WORKSPACE_ROOT = BASE_DIR.parent
-STATIC_DIR = BASE_DIR / "static"
-RATINGS_FILE = BASE_DIR / "ratings.jsonl"
+b_dir=Path(__file__).resolve().parent
+w_root=b_dir.parent
+st_dir=b_dir/"static"
+rt_file=b_dir/"ratings.jsonl"
 
-def resolve_render_script() -> Path:
-    """Finds render.py in root or website dir, falling back to render_example.py."""
-    candidates = [
-        WORKSPACE_ROOT / "render.py",
-        BASE_DIR / "render.py",
-        BASE_DIR / "render_example.py"
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return BASE_DIR / "render_example.py"
+# def old_sync_runner(pr):
+#     os.system(f"python render.py --prompt '{pr}'")
+#     return "/tmp/out.mp4"
 
-async def run_render_stream(prompt: str, include_code: bool) -> AsyncGenerator[str, None]:
-    render_script = resolve_render_script()
-    
-    cmd = [sys.executable, str(render_script), "--prompt", prompt]
-    if include_code:
+def get_script():
+    # priority to root render.py
+    for f in [w_root/"render.py",b_dir/"render.py",b_dir/"render_example.py"]:
+        if f.exists():
+            return f
+    return b_dir/"render_example.py"
+
+# @app.get("/api/poll")
+# def poll(tid:str):
+#     if os.path.exists(f"/tmp/{tid}.mp4"):
+#         return {"done":True,"url":f"/api/video?path=/tmp/{tid}.mp4"}
+#     return {"done":False}
+
+async def stream_proc(pr,inc):
+    scr=get_script()
+    cmd=[sys.executable,str(scr),"--prompt",pr]
+    if inc:
         cmd.append("--include-code")
 
-    yield f"data: {json.dumps({'type': 'init', 'script': render_script.name, 'include_code': include_code})}\n\n"
+    yield f"data: {json.dumps({'type':'init','script':scr.name})}\n\n"
 
     try:
-        proc = await asyncio.create_subprocess_exec(
+        p=await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(WORKSPACE_ROOT),
-            env=os.environ.copy()
+            cwd=str(w_root)
         )
-    except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'message': f'Failed to launch {render_script.name}: {str(e)}'})}\n\n"
+    except Exception as err:
+        yield f"data: {json.dumps({'type':'error','message':str(err)})}\n\n"
         return
 
-    stderr_lines = []
-
-    async def read_stderr():
-        while True:
-            line = await proc.stderr.readline()
-            if not line:
-                break
-            stderr_lines.append(line.decode("utf-8", errors="replace"))
-
-    stderr_task = asyncio.create_task(read_stderr())
-
+    # todo: fix stderr buffer blocking
     while True:
-        line_bytes = await proc.stdout.readline()
-        if not line_bytes:
+        line=await p.stdout.readline()
+        if not line:
             break
-        raw_line = line_bytes.decode("utf-8", errors="replace").strip()
-        if not raw_line:
+        raw=line.decode("utf-8",errors="replace").strip()
+        if not raw:
             continue
-
-        # If stdout is valid JSON, stream it directly
-        if raw_line.startswith("{") and raw_line.endswith("}"):
+        if raw.startswith("{") and raw.endswith("}"):
             try:
-                parsed = json.loads(raw_line)
-                yield f"data: {json.dumps(parsed)}\n\n"
+                # pass json direct
+                json.loads(raw)
+                yield f"data: {raw}\n\n"
                 continue
-            except json.JSONDecodeError:
+            except:
                 pass
-
-        # If stdout prints raw video path (e.g. /path/to/video.mp4 or VIDEO_PATH: ...)
-        if ".mp4" in raw_line.lower():
-            clean_path = raw_line.replace("VIDEO_PATH:", "").strip().strip('"').strip("'")
-            yield f"data: {json.dumps({'type': 'complete', 'video_path': clean_path, 'message': 'Video generated!'})}\n\n"
+        if ".mp4" in raw.lower():
+            vp=raw.replace("VIDEO_PATH:","").strip().strip('"').strip("'")
+            yield f"data: {json.dumps({'type':'complete','video_path':vp})}\n\n"
             continue
+        yield f"data: {json.dumps({'type':'log','message':raw})}\n\n"
 
-        # Otherwise emit as log line
-        yield f"data: {json.dumps({'type': 'log', 'message': raw_line})}\n\n"
-
-    await proc.wait()
-    await stderr_task
-
-    if proc.returncode != 0:
-        err_msg = "".join(stderr_lines).strip() or f"Process exited with error code {proc.returncode}"
-        yield f"data: {json.dumps({'type': 'error', 'message': err_msg})}\n\n"
+    await p.wait()
+    if p.returncode!=0:
+        err_out=(await p.stderr.read()).decode("utf-8",errors="replace").strip()
+        yield f"data: {json.dumps({'type':'error','message':err_out or f'Exit code {p.returncode}'})}\n\n"
 
 @app.get("/api/render")
-async def render_api(prompt: str = Query(...), include_code: bool = Query(False)):
-    """Server-Sent Events endpoint streaming the generation progress."""
+async def api_render(prompt:str=Query(...),include_code:bool=Query(False)):
     return StreamingResponse(
-        run_render_stream(prompt, include_code),
+        stream_proc(prompt,include_code),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+        headers={"Cache-Control":"no-cache","Connection":"keep-alive","X-Accel-Buffering":"no"}
     )
 
 @app.get("/api/video")
-async def get_video(path: str = Query(...)):
-    """Serves the generated MP4 file securely."""
-    video_file = Path(path).resolve()
-    
-    # Check if relative to workspace
-    if not video_file.exists():
-        video_file = (WORKSPACE_ROOT / path).resolve()
-
-    if not video_file.exists() or not video_file.is_file():
-        raise HTTPException(status_code=404, detail=f"Video file not found at: {path}")
-
-    return FileResponse(str(video_file), media_type="video/mp4", filename=video_file.name)
-
-class RatingRequest(BaseModel):
-    rating: int
-    prompt: str
-    video_path: str = ""
+async def api_video(path:str=Query(...)):
+    f=Path(path).resolve()
+    if not f.exists():
+        f=(w_root/path).resolve()
+    if not f.exists() or not f.is_file():
+        raise HTTPException(status_code=404,detail="Video not found")
+    return FileResponse(str(f),media_type="video/mp4",filename=f.name)
 
 @app.post("/api/rate")
-async def rate_video(req: RatingRequest):
-    """Saves user rating (1-10) to a JSON Lines file."""
-    if not (1 <= req.rating <= 10):
-        raise HTTPException(status_code=400, detail="Rating must be between 1 and 10.")
+async def api_rate(req:Request):
+    b=await req.json()
+    r=int(b.get("rating",0))
+    if r<1 or r>10:
+        raise HTTPException(status_code=400,detail="Invalid rating")
+    ent={"t":time.time(),"rating":r,"prompt":b.get("prompt",""),"video":b.get("video_path","")}
+    with open(rt_file,"a",encoding="utf-8") as f_out:
+        f_out.write(json.dumps(ent)+"\n")
+    return {"status":"ok"}
 
-    entry = {
-        "timestamp": asyncio.get_event_loop().time(),
-        "rating": req.rating,
-        "prompt": req.prompt,
-        "video_path": req.video_path
-    }
+# @app.get("/status")
+# def get_st():
+#     return {"status":"running","uptime":time.time()}
 
-    with open(RATINGS_FILE, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
+app.mount("/",StaticFiles(directory=str(st_dir),html=True),name="static")
 
-    return {"status": "ok", "message": f"Rating of {req.rating}/10 recorded."}
-
-# Mount static web directory
-app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
-
-if __name__ == "__main__":
+if __name__=="__main__":
     import uvicorn
-    print("\n[+] Starting LearnAnything Minimal Web Server on http://localhost:8000\n")
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
+    # run dev
+    uvicorn.run("server:app",host="0.0.0.0",port=8000,reload=True)
